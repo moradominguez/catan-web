@@ -1,6 +1,7 @@
 // server/CatanGame.js (full rules engine, server-side source of truth)
 const crypto = require("crypto");
 const { generateBoard } = require("../shared/board.cjs");
+const { resolveApiKey } = require("./llmAgent");
 
 // ----- Constants shared with the front-end (duplicated here for now) -----
 
@@ -198,12 +199,15 @@ function shuffle(arr) {
 // ----- CatanGame class -----
 
 class CatanGame {
-  constructor({ numPlayers = 4 } = {}) {
+  constructor({ numPlayers = 4, playerConfigs = [] } = {}) {
     this.id = crypto.randomUUID();
     this.numPlayers = numPlayers;
     this.board = generateBoard();
-    this.players = this._initPlayers(numPlayers);
+    this.playerAgents = this._buildPlayerAgents(numPlayers, playerConfigs);
+    this.players = this._initPlayers(numPlayers, playerConfigs);
     this.current = 0;
+    this.turn = 1;
+    this.robberMovedThisTurn = false;
     this.lastRoll = null;
     this.lastProduction = null;
     this.devCardDeck = shuffle(DEV_CARD_DECK);
@@ -211,18 +215,68 @@ class CatanGame {
     
     // Add initial settlements and roads for each player
     this._placeInitialBuildings();
+    this._recalculateVP();
   }
 
   // ----- internal helpers -----
 
-  _initPlayers(numPlayers) {
+  _buildPlayerAgents(numPlayers, playerConfigs = []) {
+    return Array.from({ length: numPlayers }, (_, i) => {
+      const config = playerConfigs[i] || {};
+      if (config.type !== "llm") return null;
+
+      const requestedModel = config.model || "gpt-4o";
+      const normalizedModel =
+        typeof requestedModel === "string" && requestedModel.toLowerCase().includes("gpt-4o")
+          ? "gpt-4o"
+          : requestedModel;
+      const resolvedKey = resolveApiKey({
+        ...config,
+        provider: config.provider || "openai",
+      });
+
+      return {
+        playerId: i,
+        type: "llm",
+        provider: config.provider || "openai",
+        providerName: config.providerName || config.provider || "openai",
+        providerCategory: config.providerCategory || null,
+        model: normalizedModel,
+        apiKey: config.apiKey || resolvedKey,
+        apiEndpoint: config.apiEndpoint || null,
+        algorithm: config.algorithm || "llm-only", // <--- ADD THIS
+      };
+
+    });
+  }
+
+  _initPlayers(numPlayers, playerConfigs = []) {
     const colors = ["#1976d2", "#e53935", "#8e24aa", "#ef6c00"];
     return Array.from({ length: numPlayers }, (_, i) => ({
       id: i,
-      name: `Player ${i + 1}`,
+      name: (() => {
+        const cfg = playerConfigs[i] || {};
+        const isAI = cfg.type === "llm";
+        const aiLabel = cfg.providerName || cfg.provider;
+        return cfg.name || (isAI && aiLabel ? aiLabel : `Player ${i + 1}`);
+      })(),
       color: colors[i],
+      model: (playerConfigs[i]?.type === "llm") ? "ai" : "human",
+      type: playerConfigs[i]?.type || "human",
+      provider: playerConfigs[i]?.type === "llm" ? (playerConfigs[i]?.provider || "openai") : null,
+      providerName: playerConfigs[i]?.type === "llm" ? (playerConfigs[i]?.providerName || playerConfigs[i]?.provider || "AI") : null,
+      providerModel: (() => {
+        if (playerConfigs[i]?.type !== "llm") return null;
+        const requestedModel = playerConfigs[i]?.model || "gpt-4o";
+        return typeof requestedModel === "string" && requestedModel.toLowerCase().includes("gpt-4o")
+          ? "gpt-4o"
+          : requestedModel;
+      })(),
+      providerCategory: playerConfigs[i]?.providerCategory || null,
+      algorithm: playerConfigs[i]?.algorithm || "llm-only",
       resources: { wood: 1, brick: 1, wheat: 1, sheep: 1, ore: 1 },
       vp: 0,
+      victoryPoints: 0,
       devCards: [],
       playedDevCards: [],
       knightsPlayed: 0,
@@ -230,6 +284,10 @@ class CatanGame {
       longestRoad: false,
       boughtDevCardThisTurn: false,
       hasRolled: false,
+      towns: 0,
+      cities: 0,
+      roads: 0,
+      trades: 0,
     }));
   }
 
@@ -315,10 +373,34 @@ class CatanGame {
   }
 
   _recalculateVP() {
-    this.players = this.players.map((p) => ({
-      ...p,
-      vp: calculateVP(p, this.board),
+    this.players = this.players.map((p) => {
+      const vp = calculateVP(p, this.board);
+      return { ...p, vp, victoryPoints: vp };
+    });
+  }
+
+  _derivePlayerStats() {
+    const stats = this.players.map(() => ({
+      towns: 0,
+      cities: 0,
+      roads: 0,
     }));
+
+    this.board.nodes.forEach((node) => {
+      if (node.building) {
+        const owner = node.building.ownerId;
+        if (owner == null || !stats[owner]) return;
+        if (node.building.type === "town") stats[owner].towns += 1;
+        if (node.building.type === "city") stats[owner].cities += 1;
+      }
+    });
+
+    this.board.edges.forEach((edge) => {
+      if (edge.ownerId == null) return;
+      if (stats[edge.ownerId]) stats[edge.ownerId].roads += 1;
+    });
+
+    return stats;
   }
 
   _requireRoll(playerId) {
@@ -384,16 +466,33 @@ class CatanGame {
   // ----- public API -----
 
   getState() {
+    const derived = this._derivePlayerStats();
+
+    const players = this.players.map((p, idx) => ({
+      ...p,
+      towns: derived[idx]?.towns ?? p.towns ?? 0,
+      cities: derived[idx]?.cities ?? p.cities ?? 0,
+      roads: derived[idx]?.roads ?? p.roads ?? 0,
+      devCardCount: p.devCards?.length || 0,
+      victoryPoints: p.victoryPoints ?? p.vp,
+    }));
+
     return {
       id: this.id,
       numPlayers: this.numPlayers,
       board: this.board,
-      players: this.players,
+      players,
       current: this.current,
+      turn: this.turn,
       lastRoll: this.lastRoll,
       lastProduction: this.lastProduction,
       winner: checkWinner(this.players),
     };
+  }
+
+  getPlayerAgent(playerId) {
+    if (!this.playerAgents) return null;
+    return this.playerAgents[playerId] || null;
   }
 
   // ----- Turn / dice / robber -----
@@ -425,11 +524,16 @@ class CatanGame {
   }
 
   moveRobber(hexId) {
+    if (this.robberMovedThisTurn) {
+      throw new Error("Robber already moved this turn.");
+    }
+
     const tiles = this.board.tiles.map((t, i) => ({
       ...t,
       hasRobber: i === hexId,
     }));
     this.board = { ...this.board, tiles };
+    this.robberMovedThisTurn = true;
     return this._emit({ type: "moveRobber", hexId });
   }
 
@@ -617,7 +721,9 @@ class CatanGame {
       (newResources[receiveResource] || 0) + 1;
 
     this.players = this.players.map((p) =>
-      p.id === playerId ? { ...p, resources: newResources } : p
+      p.id === playerId
+        ? { ...p, resources: newResources, trades: (p.trades || 0) + 1 }
+        : p
     );
 
     return this._emit({
@@ -821,6 +927,8 @@ class CatanGame {
     this.current = this.players.length
       ? (this.current + 1) % this.players.length
       : 0;
+    this.turn += 1;
+    this.robberMovedThisTurn = false;
   
     return this._emit({ type: "endTurn", nextPlayer: this.current });
   }

@@ -115,9 +115,10 @@ export const LLM_CATEGORIES = {
         local: true,
         endpoints: [
           {
-            id: "ollama-local",
-            label: "Ollama Local (http://localhost:11434)",
-            url: "http://localhost:11434",
+              id: "ollama-local",
+              label: "Ollama Local (http://localhost:11434/v1)",
+              url: "http://localhost:11434/v1",
+            
           },
         ],
       },

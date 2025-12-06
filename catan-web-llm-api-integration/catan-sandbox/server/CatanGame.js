@@ -14,16 +14,35 @@ const BUILDING_COSTS = {
 // Development card deck (25 cards total)
 const DEV_CARD_DECK = [
   // Victory Point cards (5)
-  "victory", "victory", "victory", "victory", "victory",
+  "victory",
+  "victory",
+  "victory",
+  "victory",
+  "victory",
   // Knight cards (14)
-  "knight", "knight", "knight", "knight", "knight", "knight", "knight",
-  "knight", "knight", "knight", "knight", "knight", "knight", "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
+  "knight",
   // Road Building (2)
-  "road-building", "road-building",
+  "road-building",
+  "road-building",
   // Year of Plenty (2)
-  "year-of-plenty", "year-of-plenty",
+  "year-of-plenty",
+  "year-of-plenty",
   // Monopoly (2)
-  "monopoly", "monopoly",
+  "monopoly",
+  "monopoly",
 ];
 
 const DEV_CARD_COST = { sheep: 1, wheat: 1, ore: 1 };
@@ -78,10 +97,9 @@ function checkWinner(players) {
   return players.find((p) => p.vp >= 10) || null;
 }
 
-function calculateLongestRoad(playerId, edges, nodes) {
-  // Find all roads owned by this player
+function calculateLongestRoad(playerId, edges /*, nodes */) {
   const playerEdges = edges.filter((e) => e.ownerId === playerId);
-  if (playerEdges.length < 5) return 0; // Need at least 5 roads for longest road
+  if (playerEdges.length < 5) return 0;
 
   // Build adjacency map for player's roads
   const roadGraph = new Map();
@@ -92,7 +110,7 @@ function calculateLongestRoad(playerId, edges, nodes) {
     roadGraph.get(edge.n2).push(edge.n1);
   });
 
-  // DFS to find longest simple path in this road graph
+  // DFS longest simple path (node-visited approximation)
   let maxLength = 0;
 
   function dfs(nodeId, visited, length) {
@@ -123,15 +141,20 @@ function updateLongestRoad(players, edges, nodes) {
 
   const maxLength = Math.max(...roadLengths.map((r) => r.length));
   if (!isFinite(maxLength) || maxLength < 5) {
-    // No one has longest road
     return players.map((p) => ({ ...p, longestRoad: false }));
   }
 
   const playersWithMax = roadLengths.filter((r) => r.length === maxLength);
   if (playersWithMax.length > 1) {
     const currentHolder = players.find((p) => p.longestRoad);
-    if (currentHolder && playersWithMax.some((r) => r.id === currentHolder.id)) {
-      return players.map((p) => ({ ...p, longestRoad: p.id === currentHolder.id }));
+    if (
+      currentHolder &&
+      playersWithMax.some((r) => r.id === currentHolder.id)
+    ) {
+      return players.map((p) => ({
+        ...p,
+        longestRoad: p.id === currentHolder.id,
+      }));
     }
     return players.map((p) => ({ ...p, longestRoad: false }));
   }
@@ -146,11 +169,19 @@ function updateLargestArmy(players) {
     return players.map((p) => ({ ...p, largestArmy: false }));
   }
 
-  const playersWithMax = players.filter((p) => p.knightsPlayed === maxKnights);
+  const playersWithMax = players.filter(
+    (p) => p.knightsPlayed === maxKnights
+  );
   if (playersWithMax.length > 1) {
     const currentHolder = players.find((p) => p.largestArmy);
-    if (currentHolder && playersWithMax.some((p) => p.id === currentHolder.id)) {
-      return players.map((p) => ({ ...p, largestArmy: p.id === currentHolder.id }));
+    if (
+      currentHolder &&
+      playersWithMax.some((p) => p.id === currentHolder.id)
+    ) {
+      return players.map((p) => ({
+        ...p,
+        largestArmy: p.id === currentHolder.id,
+      }));
     }
     return players.map((p) => ({ ...p, largestArmy: false }));
   }
@@ -159,13 +190,15 @@ function updateLargestArmy(players) {
   return players.map((p) => ({ ...p, largestArmy: p.id === winnerId }));
 }
 
-// Harbor helpers: same logic as front-end
+// Harbor helpers: guard harbors array safely
 function getPlayerTradingRatios(playerId, nodes) {
   const ratios = { default: 4 }; // 4:1 base
 
   nodes.forEach((node) => {
     if (node.building && node.building.ownerId === playerId) {
-      node.harbors.forEach((harbor) => {
+      const harbors = Array.isArray(node.harbors) ? node.harbors : [];
+      harbors.forEach((harbor) => {
+        if (!harbor) return;
         if (harbor.resource === "any") {
           ratios.default = Math.min(ratios.default, harbor.ratio);
         } else {
@@ -196,6 +229,55 @@ function shuffle(arr) {
   return a;
 }
 
+// Normalize the “algorithm” settings coming from the new UI
+function normalizeAlgoConfig(cfg = {}) {
+  // New UI fields:
+  // algorithmMode: "none" | "llm_only" | "algo_only" | "llm_plus_algo"
+  // algorithm: "none" | "mcts" | "minimax" | "hybrid" (etc)
+  // algorithmParams: object
+  const algorithmMode = cfg.algorithmMode || "llm_only";
+  const algorithm = cfg.algorithm || "none";
+  const algorithmParams =
+    cfg.algorithmParams && typeof cfg.algorithmParams === "object"
+      ? cfg.algorithmParams
+      : {};
+
+  // Back-compat for older ids like "llm-only"
+  const normalizedAlgorithm =
+    algorithm === "llm-only" ? "none" : algorithm;
+
+  const normalizedMode =
+    cfg.algorithmMode ||
+    (cfg.algorithm &&
+      cfg.algorithm !== "none" &&
+      cfg.algorithm !== "llm-only"
+      ? "llm_plus_algo"
+      : "llm_only");
+
+  return {
+    algorithmMode: normalizedMode,
+    algorithm: normalizedAlgorithm,
+    algorithmParams,
+  };
+}
+
+function normalizeModelName(requestedModel) {
+  const m = requestedModel || "gpt-4o";
+  return typeof m === "string" && m.toLowerCase().includes("gpt-4o")
+    ? "gpt-4o"
+    : m;
+}
+
+function normalizeApiKey(config) {
+  const direct = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
+  if (direct) return direct;
+  const resolved = resolveApiKey({
+    ...config,
+    provider: config.provider || "openai",
+  });
+  return typeof resolved === "string" ? resolved.trim() : "";
+}
+
 // ----- CatanGame class -----
 
 class CatanGame {
@@ -203,8 +285,13 @@ class CatanGame {
     this.id = crypto.randomUUID();
     this.numPlayers = numPlayers;
     this.board = generateBoard();
+
+    // Store both:
+    // - playerAgents (used by /llm-turn to decide provider/model/keys + algorithm routing)
+    // - players (state returned to UI)
     this.playerAgents = this._buildPlayerAgents(numPlayers, playerConfigs);
     this.players = this._initPlayers(numPlayers, playerConfigs);
+
     this.current = 0;
     this.turn = 1;
     this.robberMovedThisTurn = false;
@@ -212,145 +299,175 @@ class CatanGame {
     this.lastProduction = null;
     this.devCardDeck = shuffle(DEV_CARD_DECK);
     this.log = [];
-    
-    // Add initial settlements and roads for each player
+
     this._placeInitialBuildings();
     this._recalculateVP();
   }
 
   // ----- internal helpers -----
 
+  // Build agent configs used by /api/games/:id/llm-turn
   _buildPlayerAgents(numPlayers, playerConfigs = []) {
     return Array.from({ length: numPlayers }, (_, i) => {
-      const config = playerConfigs[i] || {};
-      if (config.type !== "llm") return null;
+      const cfg = playerConfigs[i] || {};
+      if (cfg.type !== "llm") return null;
 
-      const requestedModel = config.model || "gpt-4o";
-      const normalizedModel =
-        typeof requestedModel === "string" && requestedModel.toLowerCase().includes("gpt-4o")
-          ? "gpt-4o"
-          : requestedModel;
-      const resolvedKey = resolveApiKey({
-        ...config,
-        provider: config.provider || "openai",
-      });
+      const algo = normalizeAlgoConfig(cfg);
+      const isAlgoOnly = algo.algorithmMode === "algo_only";
+
+      const provider = isAlgoOnly
+        ? "algorithm"
+        : cfg.provider || "openai";
+      const providerName = isAlgoOnly
+        ? "Algorithm"
+        : cfg.providerName || provider || "AI";
+      const model = isAlgoOnly
+        ? algo.algorithm || "heuristic"
+        : normalizeModelName(cfg.model);
+
+      // For pure algorithm agents, no API key is needed.
+      const apiKey = isAlgoOnly
+        ? ""
+        : normalizeApiKey({ ...cfg, provider });
 
       return {
         playerId: i,
         type: "llm",
-        provider: config.provider || "openai",
-        providerName: config.providerName || config.provider || "openai",
-        providerCategory: config.providerCategory || null,
-        model: normalizedModel,
-        apiKey: config.apiKey || resolvedKey,
-        apiEndpoint: config.apiEndpoint || null,
+
+        provider,
+        providerName,
+        providerCategory: cfg.providerCategory || null,
+        model,
+        apiKey,
+        apiEndpoint: cfg.apiEndpoint || null,
+
+        algorithmMode: algo.algorithmMode,
+        algorithm: algo.algorithm,
+        algorithmParams: algo.algorithmParams,
       };
     });
   }
 
   _initPlayers(numPlayers, playerConfigs = []) {
     const colors = ["#1976d2", "#e53935", "#8e24aa", "#ef6c00"];
-    return Array.from({ length: numPlayers }, (_, i) => ({
-      id: i,
-      name: (() => {
-        const cfg = playerConfigs[i] || {};
-        const isAI = cfg.type === "llm";
-        const aiLabel = cfg.providerName || cfg.provider;
-        return cfg.name || (isAI && aiLabel ? aiLabel : `Player ${i + 1}`);
-      })(),
-      color: colors[i],
-      model: (playerConfigs[i]?.type === "llm") ? "ai" : "human",
-      type: playerConfigs[i]?.type || "human",
-      provider: playerConfigs[i]?.type === "llm" ? (playerConfigs[i]?.provider || "openai") : null,
-      providerName: playerConfigs[i]?.type === "llm" ? (playerConfigs[i]?.providerName || playerConfigs[i]?.provider || "AI") : null,
-      providerModel: (() => {
-        if (playerConfigs[i]?.type !== "llm") return null;
-        const requestedModel = playerConfigs[i]?.model || "gpt-4o";
-        return typeof requestedModel === "string" && requestedModel.toLowerCase().includes("gpt-4o")
-          ? "gpt-4o"
-          : requestedModel;
-      })(),
-      providerCategory: playerConfigs[i]?.providerCategory || null,
-      resources: { wood: 1, brick: 1, wheat: 1, sheep: 1, ore: 1 },
-      vp: 0,
-      victoryPoints: 0,
-      devCards: [],
-      playedDevCards: [],
-      knightsPlayed: 0,
-      largestArmy: false,
-      longestRoad: false,
-      boughtDevCardThisTurn: false,
-      hasRolled: false,
-      towns: 0,
-      cities: 0,
-      roads: 0,
-      trades: 0,
-    }));
+
+    return Array.from({ length: numPlayers }, (_, i) => {
+      const cfg = playerConfigs[i] || {};
+      const isAI = cfg.type === "llm";
+
+      const algo = normalizeAlgoConfig(cfg);
+      const isAlgoOnly = isAI && algo.algorithmMode === "algo_only";
+
+      const provider = isAI
+        ? isAlgoOnly
+          ? "algorithm"
+          : cfg.provider || "openai"
+        : null;
+      const providerName = isAI
+        ? isAlgoOnly
+          ? "Algorithm"
+          : cfg.providerName || provider || "AI"
+        : null;
+      const providerModel = isAI
+        ? isAlgoOnly
+          ? algo.algorithm || "heuristic"
+          : normalizeModelName(cfg.model)
+        : null;
+
+      return {
+        id: i,
+        name:
+          cfg.name ||
+          (isAI && providerName ? providerName : `Player ${i + 1}`),
+        color: colors[i],
+
+        // Keeping your existing shape so UI doesn’t break:
+        model: isAI ? "ai" : "human",
+        type: cfg.type || "human",
+
+        provider,
+        providerName,
+        providerModel,
+        providerCategory: cfg.providerCategory || null,
+
+        // Expose algorithm fields in state for UI/debug
+        algorithmMode: isAI ? algo.algorithmMode : "none",
+        algorithm: isAI ? algo.algorithm : "none",
+        algorithmParams: isAI ? algo.algorithmParams : {},
+
+        resources: { wood: 1, brick: 1, wheat: 1, sheep: 1, ore: 1 },
+        vp: 0,
+        victoryPoints: 0,
+
+        devCards: [],
+        playedDevCards: [],
+        knightsPlayed: 0,
+        largestArmy: false,
+        longestRoad: false,
+
+        boughtDevCardThisTurn: false,
+        hasRolled: false,
+
+        towns: 0,
+        cities: 0,
+        roads: 0,
+        trades: 0,
+      };
+    });
   }
 
   _placeInitialBuildings() {
     const { nodes, edges, tiles } = this.board;
-    
-    // Find desert tile indices
+
     const desertTileIndices = tiles
-      .map((tile, index) => tile.resource === "desert" ? index : -1)
-      .filter(index => index !== -1);
-    
-    // Filter out nodes that are adjacent to desert tiles or not buildable
-    const availableNodes = nodes.filter(n => {
-      if (n.building) return false; // already occupied
-      if (!n.canBuild) return false; // not adjacent to land
-      
-      // Check if this node is adjacent to any desert tile
-      const isAdjacentToDesert = n.adjHexes.some(hexIdx => 
+      .map((tile, index) => (tile.resource === "desert" ? index : -1))
+      .filter((index) => index !== -1);
+
+    const availableNodes = nodes.filter((n) => {
+      if (n.building) return false;
+      if (!n.canBuild) return false;
+      const adj = Array.isArray(n.adjHexes) ? n.adjHexes : [];
+      const isAdjacentToDesert = adj.some((hexIdx) =>
         desertTileIndices.includes(hexIdx)
       );
-      
-      return !isAdjacentToDesert; // only allow nodes NOT adjacent to desert
+      return !isAdjacentToDesert;
     });
-    
-    // For each player, place 2 towns and connect each with a road
+
     for (let playerId = 0; playerId < this.numPlayers; playerId++) {
       for (let settlement = 0; settlement < 2; settlement++) {
         if (availableNodes.length === 0) break;
-        
-        // Randomly select a node for the town
+
         const randomIndex = Math.floor(Math.random() * availableNodes.length);
         const selectedNode = availableNodes[randomIndex];
-        
-        // Place the town using the buildTown method (but free)
         const nodeId = selectedNode.id;
+
+        // Place town (free)
         selectedNode.building = { ownerId: playerId, type: "town" };
-        
-        // Remove this node from available nodes
         availableNodes.splice(randomIndex, 1);
-        
-        // Find edges connected to this node and place a road on a random one
-        const connectedEdges = edges.filter(e => {
-          if (e.ownerId !== null) return false; // edge already owned
-          
+
+        // Place a connected road (free)
+        const connectedEdges = edges.filter((e) => {
+          if (e.ownerId != null) return false;
           const isConnected = e.n1 === nodeId || e.n2 === nodeId;
           if (!isConnected) return false;
-          
-          // Check if both nodes connected by this edge are buildable
-          const node1 = nodes.find(n => n.id === e.n1);
-          const node2 = nodes.find(n => n.id === e.n2);
-          
-          return node1?.canBuild && node2?.canBuild;
+          const node1 = nodes.find((n) => n.id === e.n1);
+          const node2 = nodes.find((n) => n.id === e.n2);
+          return !!(node1?.canBuild && node2?.canBuild);
         });
-        
+
         if (connectedEdges.length > 0) {
-          const randomEdgeIndex = Math.floor(Math.random() * connectedEdges.length);
+          const randomEdgeIndex = Math.floor(
+            Math.random() * connectedEdges.length
+          );
           connectedEdges[randomEdgeIndex].ownerId = playerId;
         }
-        
-        // Remove nodes that are too close (adjacent) to maintain spacing
+
+        // Enforce spacing: remove adjacent nodes from availability
         const adjacentNodeIds = edges
-          .filter(e => e.n1 === nodeId || e.n2 === nodeId)
-          .flatMap(e => [e.n1, e.n2])
-          .filter(id => id !== nodeId);
-        
-        // Remove adjacent nodes from available nodes to prevent close placement
+          .filter((e) => e.n1 === nodeId || e.n2 === nodeId)
+          .flatMap((e) => [e.n1, e.n2])
+          .filter((id) => id !== nodeId);
+
         for (let i = availableNodes.length - 1; i >= 0; i--) {
           if (adjacentNodeIds.includes(availableNodes[i].id)) {
             availableNodes.splice(i, 1);
@@ -361,10 +478,7 @@ class CatanGame {
   }
 
   _emit(event) {
-    const full = {
-      timestamp: new Date().toISOString(),
-      ...event,
-    };
+    const full = { timestamp: new Date().toISOString(), ...event };
     this.log.push(full);
     return full;
   }
@@ -377,19 +491,14 @@ class CatanGame {
   }
 
   _derivePlayerStats() {
-    const stats = this.players.map(() => ({
-      towns: 0,
-      cities: 0,
-      roads: 0,
-    }));
+    const stats = this.players.map(() => ({ towns: 0, cities: 0, roads: 0 }));
 
     this.board.nodes.forEach((node) => {
-      if (node.building) {
-        const owner = node.building.ownerId;
-        if (owner == null || !stats[owner]) return;
-        if (node.building.type === "town") stats[owner].towns += 1;
-        if (node.building.type === "city") stats[owner].cities += 1;
-      }
+      if (!node.building) return;
+      const owner = node.building.ownerId;
+      if (owner == null || !stats[owner]) return;
+      if (node.building.type === "town") stats[owner].towns += 1;
+      if (node.building.type === "city") stats[owner].cities += 1;
     });
 
     this.board.edges.forEach((edge) => {
@@ -425,7 +534,7 @@ class CatanGame {
       if (!resource || resource === "desert" || resource === "water") return;
 
       nodes.forEach((node) => {
-        if (node.building && node.adjHexes.includes(hexIdx)) {
+        if (node.building && (node.adjHexes || []).includes(hexIdx)) {
           const amt = node.building.type === "city" ? 2 : 1;
           const owner = node.building.ownerId;
 
@@ -450,10 +559,9 @@ class CatanGame {
             playerId: p.id,
             playerName: p.name,
             playerColor: p.color,
-            resources: Object.entries(resources).map(([resource, amount]) => ({
-              resource,
-              amount,
-            })),
+            resources: Object.entries(resources).map(
+              ([resource, amount]) => ({ resource, amount })
+            ),
           };
         }
       ),
@@ -492,32 +600,133 @@ class CatanGame {
     return this.playerAgents[playerId] || null;
   }
 
+  // Return a structured list of legal actions for the current state.
+  getLegalActions(playerId = this.current) {
+    const legal = {
+      rollDice: [],
+      endTurn: [{}],
+      buildTown: [],
+      buildCity: [],
+      buildRoad: [],
+      moveRobber: [],
+      buyDevCard: [],
+      harborTrade: [],
+    };
+
+    const player = this.players[playerId];
+    if (!player) return legal;
+
+    // if not rolled -> only roll + endTurn
+    if (!player.hasRolled) {
+      legal.rollDice.push({});
+      return legal;
+    }
+
+    // robber targets: any tile except current robber
+    for (let hexId = 0; hexId < (this.board.tiles?.length || 0); hexId++) {
+      const t = this.board.tiles[hexId];
+      if (!t) continue;
+      if (!t.hasRobber) legal.moveRobber.push({ hexId });
+    }
+
+    // buy dev card
+    if (
+      canAfford(player.resources, DEV_CARD_COST) &&
+      this.devCardDeck?.length
+    ) {
+      legal.buyDevCard.push({});
+    }
+
+    // build city: upgrade your own towns
+    for (let nodeId = 0; nodeId < (this.board.nodes?.length || 0); nodeId++) {
+      const node = this.board.nodes[nodeId];
+      if (!node?.building) continue;
+      if (node.building.ownerId !== playerId) continue;
+      if (node.building.type !== "town") continue;
+      if (canAfford(player.resources, BUILDING_COSTS.city)) {
+        legal.buildCity.push({ nodeId });
+      }
+    }
+
+    // build town
+    if (canAfford(player.resources, BUILDING_COSTS.town)) {
+      for (let nodeId = 0; nodeId < (this.board.nodes?.length || 0); nodeId++) {
+        const node = this.board.nodes[nodeId];
+        if (!node) continue;
+        if (!node.canBuild) continue;
+        if (node.building) continue;
+
+        const neighborNodeIds = this.board.edges
+          .filter((e) => e.n1 === nodeId || e.n2 === nodeId)
+          .flatMap((e) => [e.n1, e.n2])
+          .filter((id) => id !== nodeId);
+
+        const neighborOccupied = neighborNodeIds.some(
+          (id) => this.board.nodes[id] && this.board.nodes[id].building
+        );
+        if (neighborOccupied) continue;
+
+        legal.buildTown.push({ nodeId });
+      }
+    }
+
+    // build road
+    if (canAfford(player.resources, BUILDING_COSTS.road)) {
+      for (let edgeId = 0; edgeId < (this.board.edges?.length || 0); edgeId++) {
+        const edge = this.board.edges[edgeId];
+        if (!edge) continue;
+        if (edge.ownerId != null) continue;
+
+        const node1 = this.board.nodes[edge.n1];
+        const node2 = this.board.nodes[edge.n2];
+
+        const playerConnected =
+          (node1?.building && node1.building.ownerId === playerId) ||
+          (node2?.building && node2.building.ownerId === playerId) ||
+          this.board.edges.some(
+            (e) =>
+              e.ownerId === playerId &&
+              (e.n1 === edge.n1 ||
+                e.n1 === edge.n2 ||
+                e.n2 === edge.n1 ||
+                e.n2 === edge.n2)
+          );
+
+        if (!playerConnected) continue;
+        if (!node1?.canBuild && !node2?.canBuild) continue;
+
+        legal.buildRoad.push({ edgeId });
+      }
+    }
+
+    return legal;
+  }
+
   // ----- Turn / dice / robber -----
 
   rollDice() {
     const currentPlayer = this.players[this.current];
-    
-    // Check if player already rolled
+
     if (currentPlayer.hasRolled) {
       throw new Error("You already rolled this turn!");
     }
-    
+
     const d1 = 1 + Math.floor(Math.random() * 6);
     const d2 = 1 + Math.floor(Math.random() * 6);
     const total = d1 + d2;
+
     this.lastRoll = { d1, d2, total };
-  
-    // Mark that this player has rolled
+
+    // mark rolled for current player
     this.players = this.players.map((p) =>
       p.id === this.current ? { ...p, hasRolled: true } : p
     );
-  
+
     if (total !== 7) {
       this._awardProduction(total);
     }
-  
-    const event = this._emit({ type: "rollDice", d1, d2, total });
-    return event;
+
+    return this._emit({ type: "rollDice", d1, d2, total });
   }
 
   moveRobber(hexId) {
@@ -537,10 +746,7 @@ class CatanGame {
   // ----- Building -----
 
   buildRoad(edgeId, playerId = this.current, opts = { free: false }) {
-
-    if (!opts.free) {
-      this._requireRoll(playerId);
-    }
+    if (!opts.free) this._requireRoll(playerId);
 
     const board = this.board;
     const edge = board.edges[edgeId];
@@ -553,7 +759,6 @@ class CatanGame {
     const player = this.players[playerId];
     if (!player) throw new Error("Invalid player");
 
-    // Must connect to player's building or existing road
     const playerConnected =
       (node1.building && node1.building.ownerId === playerId) ||
       (node2.building && node2.building.ownerId === playerId) ||
@@ -567,15 +772,15 @@ class CatanGame {
       );
 
     if (!playerConnected) {
-      throw new Error("Road must connect to your building or existing road");
+      throw new Error(
+        "Road must connect to your building or existing road"
+      );
     }
 
-    // At least one adjacent node must be buildable (not all water)
     if (!node1.canBuild && !node2.canBuild) {
       throw new Error("Cannot build road here - no adjacent land");
     }
 
-    // Pay cost unless free (e.g. Road Building card)
     const cost = BUILDING_COSTS.road;
     if (!opts.free && !canAfford(player.resources, cost)) {
       throw new Error("Not enough resources for road");
@@ -583,7 +788,9 @@ class CatanGame {
 
     const updatedPlayer = {
       ...player,
-      resources: opts.free ? player.resources : deductResources(player.resources, cost),
+      resources: opts.free
+        ? player.resources
+        : deductResources(player.resources, cost),
     };
 
     const newEdges = board.edges.slice();
@@ -593,7 +800,6 @@ class CatanGame {
       p.id === playerId ? updatedPlayer : p
     );
 
-    // Update longest road and VP
     newPlayers = updateLongestRoad(newPlayers, newEdges, board.nodes);
     this.players = newPlayers;
     this.board = { ...board, edges: newEdges };
@@ -614,15 +820,10 @@ class CatanGame {
 
     const cost = BUILDING_COSTS.town;
 
-    if (!node.canBuild) {
+    if (!node.canBuild)
       throw new Error("Cannot build here - no adjacent land");
-    }
+    if (node.building) throw new Error("Node already has a building");
 
-    if (node.building) {
-      throw new Error("Node already has a building");
-    }
-
-    // Distance rule: no adjacent building via edges
     const neighborNodeIds = board.edges
       .filter((e) => e.n1 === nodeId || e.n2 === nodeId)
       .flatMap((e) => [e.n1, e.n2])
@@ -631,13 +832,10 @@ class CatanGame {
     const neighborOccupied = neighborNodeIds.some(
       (id) => board.nodes[id] && board.nodes[id].building
     );
-    if (neighborOccupied) {
+    if (neighborOccupied)
       throw new Error("Too close to another town/city");
-    }
-
-    if (!canAfford(player.resources, cost)) {
+    if (!canAfford(player.resources, cost))
       throw new Error("Not enough resources for town");
-    }
 
     const updatedPlayer = {
       ...player,
@@ -661,6 +859,7 @@ class CatanGame {
 
   buildCity(nodeId, playerId = this.current) {
     this._requireRoll(playerId);
+
     const board = this.board;
     const node = board.nodes[nodeId];
     if (!node) throw new Error("Invalid node");
@@ -675,9 +874,8 @@ class CatanGame {
     if (!player) throw new Error("Invalid player");
 
     const cost = BUILDING_COSTS.city;
-    if (!canAfford(player.resources, cost)) {
+    if (!canAfford(player.resources, cost))
       throw new Error("Not enough resources for city");
-    }
 
     const updatedPlayer = {
       ...player,
@@ -703,10 +901,15 @@ class CatanGame {
 
   tradeHarbor(playerId, giveResource, receiveResource) {
     this._requireRoll(playerId);
+
     const player = this.players[playerId];
     if (!player) throw new Error("Invalid player");
 
-    const ratio = getBestTradingRatio(playerId, giveResource, this.board.nodes);
+    const ratio = getBestTradingRatio(
+      playerId,
+      giveResource,
+      this.board.nodes
+    );
     if ((player.resources[giveResource] || 0) < ratio) {
       throw new Error(`Not enough ${giveResource} to trade`);
     }
@@ -719,7 +922,11 @@ class CatanGame {
 
     this.players = this.players.map((p) =>
       p.id === playerId
-        ? { ...p, resources: newResources, trades: (p.trades || 0) + 1 }
+        ? {
+            ...p,
+            resources: newResources,
+            trades: (p.trades || 0) + 1,
+          }
         : p
     );
 
@@ -736,18 +943,15 @@ class CatanGame {
 
   buyDevCard(playerId = this.current) {
     this._requireRoll(playerId);
-    if (!this.devCardDeck.length) {
+    if (!this.devCardDeck.length)
       throw new Error("No development cards left");
-    }
 
     const player = this.players[playerId];
     if (!player) throw new Error("Invalid player");
-
-    if (!canAfford(player.resources, DEV_CARD_COST)) {
+    if (!canAfford(player.resources, DEV_CARD_COST))
       throw new Error("Not enough resources for dev card");
-    }
 
-    const cardType = this.devCardDeck.pop(); // draw from top
+    const cardType = this.devCardDeck.pop();
     const updatedPlayer = {
       ...player,
       resources: deductResources(player.resources, DEV_CARD_COST),
@@ -758,7 +962,7 @@ class CatanGame {
     this.players = this.players.map((p) =>
       p.id === playerId ? updatedPlayer : p
     );
-    this._recalculateVP(); // victory cards immediately count
+    this._recalculateVP();
 
     return this._emit({ type: "buyDevCard", playerId, cardType });
   }
@@ -770,9 +974,7 @@ class CatanGame {
     const idx = player.devCards.findIndex(
       (c) => c.type === "knight" && c.canPlay
     );
-    if (idx === -1) {
-      throw new Error("No playable Knight card");
-    }
+    if (idx === -1) throw new Error("No playable Knight card");
 
     const newDevCards = player.devCards.filter((_, i) => i !== idx);
 
@@ -801,9 +1003,7 @@ class CatanGame {
     const idx = player.devCards.findIndex(
       (c) => c.type === "year-of-plenty" && c.canPlay
     );
-    if (idx === -1) {
-      throw new Error("No playable Year of Plenty card");
-    }
+    if (idx === -1) throw new Error("No playable Year of Plenty card");
 
     const newDevCards = player.devCards.filter((_, i) => i !== idx);
     const newResources = addResources(player.resources, {
@@ -834,15 +1034,11 @@ class CatanGame {
     const player = this.players[playerId];
     if (!player) throw new Error("Invalid player");
 
-    // Find a playable monopoly card
     const idx = player.devCards.findIndex(
       (c) => c.type === "monopoly" && c.canPlay
     );
-    if (idx === -1) {
-      throw new Error("No playable Monopoly card");
-    }
+    if (idx === -1) throw new Error("No playable Monopoly card");
 
-    // First compute how much we will steal
     let totalStolen = 0;
     const intermediate = this.players.map((p) => {
       if (p.id === playerId) return p;
@@ -854,9 +1050,10 @@ class CatanGame {
       };
     });
 
-    // Now update the playing player
     const updatedPlayer = intermediate.find((p) => p.id === playerId);
-    const newDevCards = updatedPlayer.devCards.filter((_, i) => i !== idx);
+    const newDevCards = updatedPlayer.devCards.filter(
+      (_, i) => i !== idx
+    );
     const newResources = {
       ...updatedPlayer.resources,
       [resource]:
@@ -884,7 +1081,6 @@ class CatanGame {
     });
   }
 
-  // Road Building: gives 2 free road builds; client will call buildRoad(..., {free:true}) twice
   playRoadBuilding(playerId = this.current) {
     const player = this.players[playerId];
     if (!player) throw new Error("Invalid player");
@@ -892,9 +1088,7 @@ class CatanGame {
     const idx = player.devCards.findIndex(
       (c) => c.type === "road-building" && c.canPlay
     );
-    if (idx === -1) {
-      throw new Error("No playable Road Building card");
-    }
+    if (idx === -1) throw new Error("No playable Road Building card");
 
     const newDevCards = player.devCards.filter((_, i) => i !== idx);
 
@@ -914,19 +1108,23 @@ class CatanGame {
   // ----- Turn end -----
 
   endTurn() {
+    // make newly bought dev cards playable from next turn onward
     this.players = this.players.map((p) => ({
       ...p,
-      devCards: p.devCards.map((card) => ({ ...card, canPlay: true })),
+      devCards: (p.devCards || []).map((card) => ({
+        ...card,
+        canPlay: true,
+      })),
       boughtDevCardThisTurn: false,
-      hasRolled: false, // ADD THIS LINE - reset for next player
+      hasRolled: false,
     }));
-  
+
     this.current = this.players.length
       ? (this.current + 1) % this.players.length
       : 0;
     this.turn += 1;
     this.robberMovedThisTurn = false;
-  
+
     return this._emit({ type: "endTurn", nextPlayer: this.current });
   }
 }
